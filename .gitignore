@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+.pytest_cache/
+# generated while testing; samples/speech.mp3 is kept as the demo input
+samples/*
+!samples/speech.mp3

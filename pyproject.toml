@@ -1,0 +1,20 @@
+[project]
+name = "transcriber"
+version = "0.1.0"
+description = "Audio to timestamped text: any format, any length."
+requires-python = ">=3.10"
+dependencies = [
+    "onnx-asr[cpu,hub]>=0.12",  # Parakeet on ONNX Runtime, plus Silero VAD
+    "faster-whisper>=1.1",  # the Whisper engine; also brings PyAV (bundled FFmpeg)
+    "numpy",
+    "fastapi>=0.110",
+    "uvicorn",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
