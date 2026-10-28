@@ -2,6 +2,86 @@
 
 Audio in (any format, any length), text out with a timestamp on every segment.
 
+## Design decisions
+
+Choosing a model was the easy part. The work went into what breaks in practice:
+- files in formats nobody planned for;
+- recordings hours long;
+- jobs that die halfway.
+
+Each decision below gives its reason and what it costs.
+
+1. **Parakeet TDT 0.6B v3, quantised to int8, run on ONNX Runtime.**
+   - *Why:* on CPU it is several times faster than Whisper base and more accurate. A
+     27 s clip took 6 s, against 34 s for Whisper. In int8 it is 640 MB instead of
+     2.5 GB, and the ONNX export installs without PyTorch, CUDA or NeMo.
+   - *Cost:* it covers 25 European languages, and it reports neither the language nor
+     a confidence score.
+
+2. **The pipeline depends on an `Engine` interface, not on a library.**
+   - *Why:* Parakeet, Whisper (the fallback for its ~100 languages, Arabic included)
+     and a mock engine are interchangeable. Changing model or moving to a hosted API
+     means writing one class. The mock reports real timestamps, so the tests check
+     the pipeline's own logic and need no model download.
+
+3. **One decoder for every format, then normalise immediately.**
+   - *Why:* PyAV bundles FFmpeg, so WAV, MP3, M4A, FLAC, Opus and MP4 audio share one
+     code path, with no per-format branches and no system ffmpeg to install.
+   - Everything becomes mono float32 at 16 kHz on the way in. Nothing downstream knows
+     the original format, so nothing downstream can get it wrong.
+
+4. **Validate before queueing.**
+   - *Why:* every upload is probed first. A file that isn't media, or has no audio
+     stream, gets `415` in the request that sent it. Otherwise it would fail minutes
+     later inside a job nobody is watching.
+   - The extension is ignored: the content decides.
+
+5. **Trust decoded samples, not file headers.**
+   - *Why:* durations and timestamps are counted from the decoded samples, because VBR
+     MP3 headers are often wrong. A damaged packet is skipped and logged, so it costs
+     milliseconds of audio rather than the whole transcript.
+
+6. **Stream the audio; never load the whole file.**
+   - *Why:* an hour of 16 kHz float32 is ~230 MB. Decoding as a stream keeps memory
+     at one chunk whatever the length.
+
+7. **Cut chunks at pauses, not into overlapping windows.**
+   - *Why:* each cut lands at the quietest 100 ms in the last 15 s of a ~5-minute
+     window. Chunks don't overlap, so no word is split and there is no fragile
+     overlap-and-deduplicate step.
+   - *Cost:* now and then a cut falls at a comma pause, and one sentence comes out as
+     two segments, with every word intact. On an 11-minute test this happened to
+     1 sentence in 125.
+
+8. **Let the VAD decide segment boundaries.**
+   - *Why:* Silero VAD splits each chunk at pauses of 500 ms or more (sentence
+     boundaries, not breaths) and keeps every segment under 30 s, the range where
+     Parakeet is most accurate. Silence never reaches the model, so it can't
+     invent text there.
+
+9. **Checkpoint every finished chunk.**
+   - *Why:* a crash late in a long file resumes at the chunk it died on, not at zero.
+   - The checkpoint key covers the file's content hash, the engine, the language and
+     the chunk length, so it is never reused for a different input.
+
+10. **Asynchronous jobs, not a blocking request.**
+    - *Why:* long files take minutes, longer than any proxy will hold a connection open.
+      `POST` returns `202` and a job id; `GET` reports progress and then the result.
+
+11. **A fixed output contract.**
+    - *Why:* consumers shouldn't each re-clean the output. Downstream code can rely on:
+      - ids run 1..n;
+      - segments are ordered and inside the file's duration;
+      - text is trimmed and never empty;
+      - a model looping on itself is dropped.
+    - One result renders as JSON, SRT, VTT or plain text.
+
+12. **Deliberately single-machine for now.**
+    - Jobs are held in memory and one worker thread runs one model, which is enough to
+      prove the pipeline. [System design at scale](#system-design-at-scale-not-implemented)
+      describes the queue, object storage and database that replace them. The chunk
+      checkpoints are already the piece that makes distributed recovery work.
+
 ```
 file ─▶ probe ─▶ decode (stream) ─▶ chunk at pauses ─▶ Parakeet + VAD ─▶ re-time ─▶ clean ─▶ JSON / SRT / VTT / TXT
 ```
