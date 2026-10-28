@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcriber</title>
+<link rel="icon" href="data:,">  <!-- no icon file; stops the browser asking for /favicon.ico -->
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #16181d; --muted: #5d6470; --line: #e3e6eb;
+    --accent: #3657d6; --accent-soft: #e8edfd; --error: #b42318; --error-soft: #fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101216; --card: #181b21; --ink: #e8eaee; --muted: #9aa1ad; --line: #2a2f38;
+      --accent: #7d97ff; --accent-soft: #1f2741; --error: #ff8a80; --error-soft: #3a1d1b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  .lede { color: var(--muted); margin: 4px 0 24px; }
+
+  .drop {
+    display: grid; place-items: center; gap: 6px; text-align: center;
+    padding: 40px 16px; border: 2px dashed var(--line); border-radius: 14px;
+    background: var(--card); cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { font-size: 16px; }
+  .drop span { color: var(--muted); font-size: 13px; }
+  .drop input { display: none; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-top: 20px; }
+  .status { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+  .status .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status .stage { color: var(--muted); white-space: nowrap; }
+  .bar { height: 6px; border-radius: 3px; background: var(--line); margin-top: 10px; overflow: hidden; }
+  .bar div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  .bar.busy div { width: 30%; animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+  .error { color: var(--error); background: var(--error-soft); border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
+
+  .player video, .player audio { width: 100%; border-radius: 10px; background: #000; }
+  .player audio { background: none; }
+  .meta { color: var(--muted); font-size: 13px; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  .exports { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .exports a, button.secondary {
+    font: inherit; font-size: 13px; color: var(--accent); background: var(--accent-soft);
+    border: 0; border-radius: 8px; padding: 6px 12px; text-decoration: none; cursor: pointer;
+  }
+
+  ol.segments { list-style: none; margin: 16px 0 0; padding: 0; }
+  ol.segments li button {
+    display: grid; grid-template-columns: 112px 1fr; gap: 12px; width: 100%; text-align: left;
+    font: inherit; color: inherit; background: none; border: 0; border-radius: 8px;
+    padding: 8px 10px; cursor: pointer;
+  }
+  ol.segments li button:hover { background: var(--bg); }
+  ol.segments li.active button { background: var(--accent-soft); }
+  ol.segments time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; padding-top: 1px; }
+  @media (max-width: 520px) { ol.segments li button { grid-template-columns: 1fr; gap: 0; } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Transcriber</h1>
+    <a href="/docs">API docs</a>
+  </header>
+  <p class="lede">Upload audio or video and get the text back with a timestamp on every line.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="audio/*,video/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm,.mp4,.mov,.mkv">
+    <strong>Drop a file here, or click to choose one</strong>
+    <span>MP3, WAV, M4A, FLAC, OGG/Opus, or a video (MP4, MOV, MKV, WebM) · any length</span>
+  </label>
+
+  <section class="card" id="progress" hidden>
+    <div class="status"><span class="name" id="name"></span><span class="stage" id="stage"></span></div>
+    <div class="bar" id="bar"><div></div></div>
+    <p class="error" id="error" hidden></p>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <div class="player" id="player"></div>
+    <p class="meta" id="meta"></p>
+    <div class="exports" id="exports"></div>
+    <ol class="segments" id="segments"></ol>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let media = null;  // the <audio>/<video> playing the local copy of the upload
+
+const drop = $("drop");
+$("file").addEventListener("change", (e) => e.target.files[0] && start(e.target.files[0]));
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) start(e.dataTransfer.files[0]);
+});
+
+function start(file) {
+  $("progress").hidden = false; $("result").hidden = true; $("error").hidden = true; $("bar").hidden = false;
+  $("name").textContent = file.name;
+  setStage("Uploading…", 0);
+
+  const body = new FormData();
+  body.append("file", file);
+  const xhr = new XMLHttpRequest();  // not fetch: fetch can't report upload progress
+  xhr.open("POST", "/transcriptions");
+  xhr.upload.onprogress = (e) => e.lengthComputable && setStage("Uploading…", e.loaded / e.total);
+  xhr.onerror = () => fail("The upload didn't reach the server.");
+  xhr.onload = () => {
+    const reply = safeJson(xhr.responseText);
+    if (xhr.status !== 202) return fail(detail(reply) || `Upload failed (${xhr.status}).`);
+    setStage("Queued…", null);
+    poll(reply.id, file);
+  };
+  xhr.send(body);
+}
+
+async function poll(id, file) {
+  let job;
+  try {
+    job = await (await fetch(`/transcriptions/${id}`)).json();
+  } catch {
+    return setTimeout(() => poll(id, file), 2000);  // a blip; the job is still running server-side
+  }
+  if (job.status === "failed") return fail(job.error || "Transcription failed.");
+  if (job.status === "done") return show(job, file);
+  if (job.status === "running") {
+    // The first job also loads the model, which shows as a few seconds at 0%.
+    setStage(job.progress > 0 ? `Transcribing… ${Math.round(job.progress * 100)}%` : "Transcribing…",
+             job.progress > 0 ? job.progress : null);
+  }
+  setTimeout(() => poll(id, file), 1000);
+}
+
+function show(job, file) {
+  $("progress").hidden = true; $("result").hidden = false;
+  const r = job.result;
+
+  const player = $("player");
+  player.replaceChildren();
+  media = document.createElement(file.type.startsWith("video/") ? "video" : "audio");
+  media.controls = true;
+  media.src = URL.createObjectURL(file);  // plays the local file; nothing is downloaded again
+  media.addEventListener("timeupdate", highlight);
+  player.append(media);
+
+  const took = job.finished_at - job.created_at;
+  $("meta").replaceChildren(
+    ...[
+      `${clock(r.duration)} long`,
+      `${r.segments.length} segments`,
+      `transcribed in ${took.toFixed(1)}s`,
+      r.engine,
+      r.language ? `language: ${r.language}` : null,
+    ].filter(Boolean).map((t) => Object.assign(document.createElement("span"), { textContent: t })),
+  );
+
+  const base = file.name.replace(/\.[^.]+$/, "");
+  $("exports").replaceChildren(...["srt", "vtt", "txt", "json"].map((f) =>
+    Object.assign(document.createElement("a"), {
+      href: `/transcriptions/${job.id}?format=${f}`, download: `${base}.${f}`, textContent: `Download .${f}`,
+    })));
+  const copy = Object.assign(document.createElement("button"), { className: "secondary", textContent: "Copy text" });
+  copy.onclick = async () => {
+    await navigator.clipboard.writeText(r.text);
+    copy.textContent = "Copied"; setTimeout(() => (copy.textContent = "Copy text"), 1500);
+  };
+  $("exports").append(copy);
+
+  $("segments").replaceChildren(...r.segments.map((s) => {
+    const li = document.createElement("li");
+    li.dataset.start = s.start; li.dataset.end = s.end;
+    const btn = document.createElement("button");
+    const time = Object.assign(document.createElement("time"), { textContent: `${clock(s.start)} – ${clock(s.end)}` });
+    btn.append(time, Object.assign(document.createElement("span"), { textContent: s.text }));
+    btn.onclick = () => { media.currentTime = s.start; media.play(); };
+    li.append(btn);
+    return li;
+  }));
+}
+
+function highlight() {
+  const t = media.currentTime;
+  for (const li of $("segments").children) {
+    li.classList.toggle("active", t >= +li.dataset.start && t < +li.dataset.end);
+  }
+}
+
+function setStage(text, fraction) {
+  $("stage").textContent = text;
+  const bar = $("bar");
+  bar.classList.toggle("busy", fraction === null);  // unknown length: show motion instead of a number
+  bar.firstElementChild.style.width = fraction === null ? "" : `${Math.round(fraction * 100)}%`;
+}
+
+function fail(message) {
+  $("stage").textContent = "Failed";
+  $("bar").hidden = true;  // a half-filled bar next to an error reads as "still going"
+  $("error").textContent = message;
+  $("error").hidden = false;
+}
+
+function clock(seconds) {
+  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = (seconds % 60).toFixed(1);
+  const ss = s.padStart(4, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${String(m).padStart(2, "0")}:${ss}`;
+}
+
+function safeJson(text) { try { return JSON.parse(text); } catch { return null; } }
+function detail(reply) {
+  const d = reply && reply.detail;
+  return Array.isArray(d) ? d.map((e) => e.msg).join("; ") : d;
+}
+</script>
+</body>
+</html>

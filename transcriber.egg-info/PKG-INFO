@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: transcriber
+Version: 0.1.0
+Summary: Audio to timestamped text: any format, any length.
+Requires-Python: >=3.10
+Requires-Dist: onnx-asr[cpu,hub]>=0.12
+Requires-Dist: faster-whisper>=1.1
+Requires-Dist: numpy
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn
+Requires-Dist: python-multipart
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: httpx; extra == "dev"

@@ -104,8 +104,9 @@ python -m transcriber talk.mp3                 # JSON to stdout
 python -m transcriber talk.m4a -f srt -o talk.srt
 python -m transcriber lecture.mp3 --checkpoint-dir .ckpt   # resumable
 
-# Service
-uvicorn transcriber.api:app --port 8000
+# Service + upload page
+python -m uvicorn transcriber.api:app --port 8000
+# open http://localhost:8000: drop in audio or video, watch progress, click a line to hear it
 curl -F file=@talk.mp3 localhost:8000/transcriptions        # -> 202 {"id": ...}
 curl localhost:8000/transcriptions/<id>                     # status, progress, result
 curl "localhost:8000/transcriptions/<id>?format=srt"

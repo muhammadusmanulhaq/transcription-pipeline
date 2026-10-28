@@ -1,9 +1,11 @@
 """HTTP service.
 
+    GET  /                           upload page: drop a file, watch progress, play it back by segment
     POST /transcriptions             upload a file -> 202 with a job id
     GET  /transcriptions/{id}        status, progress, and the transcript once done
     GET  /transcriptions/{id}?format=srt|vtt|txt
     GET  /health
+    GET  /docs                       interactive API docs
 
 Transcription is a job, not a request. A one-hour file takes minutes even on
 a GPU, longer than any proxy will hold a connection open, so the upload
@@ -29,7 +31,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from . import audio
 from .engines import Engine, make_engine
@@ -80,6 +82,11 @@ def engine() -> Engine:
         if _engine is None:
             _engine = make_engine(ENGINE, MODEL)
         return _engine
+
+
+@app.get("/", include_in_schema=False)
+def home():
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
 @app.get("/health")

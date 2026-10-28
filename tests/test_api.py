@@ -54,5 +54,11 @@ def test_oversized_upload_is_refused(client, monkeypatch):
     assert r.status_code == 413
 
 
+def test_the_upload_page_is_served(client):
+    r = client.get("/")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    assert '"/transcriptions"' in r.text  # the page posts to the API it is served by
+
+
 def test_unknown_job(client):
     assert client.get("/transcriptions/nope").status_code == 404

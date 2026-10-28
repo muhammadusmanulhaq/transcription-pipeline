@@ -12,6 +12,16 @@ dependencies = [
     "python-multipart",
 ]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["transcriber"]  # tests/ and samples/ sit beside it and are not part of the package
+
+[tool.setuptools.package-data]
+transcriber = ["static/*"]  # the upload page
+
 [project.optional-dependencies]
 dev = ["pytest", "httpx"]
 
